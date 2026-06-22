@@ -7,12 +7,17 @@ from .network import NeuralNetwork, Trainer
 from .losses import MeanSquaredError, BinaryCrossEntropy, DiceLoss, CategoricalCrossEntropy
 
 # Layer e componenti
-from .layers import Dense
-from .activation import ReLU, LeakyReLU, Sigmoid, Linear, Softmax
+from .layers import Dense, BatchNorm
+from .activation import ReLU, LeakyReLU, Sigmoid, Tanh, Linear, Softmax
 from .operations import Dropout
 
 # Ottimizzatori
-from .optimizers import SGD, SGDMomentum
+from .optimizers import SGD, SGDMomentum, Adam
 
 # Utility
-from .utils import compute_accuracy, compute_f1_score, mae, rmse, to_one_hot
+from .utils import (
+    compute_accuracy, compute_f1_score, confusion_matrix,
+    mae, rmse, r2_score,
+    normalize, normalize_minmax, normalize_data,
+    to_one_hot, train_test_split,
+)

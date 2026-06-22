@@ -39,9 +39,9 @@ Questo ti permette di modificare il codice in `libNN/` e vedere i cambiamenti ri
 
 - **`network.py`**: Contiene `NeuralNetwork` (per assemblare i layer) e `Trainer` (per il ciclo di addestramento).
 - **`losses.py`**: Contiene le funzioni di Loss (`MeanSquaredError`, `BinaryCrossEntropy`, `DiceLoss`, `CategoricalCrossEntropy`).
-- **`layers.py`**: I layer standard, come `Dense` (i classici neuroni completamente connessi).
-- **`activation.py`**: Le funzioni di attivazione (`ReLU`, `LeakyReLU`, `Sigmoid`, `Linear`, `Softmax`) che danno "intelligenza" e non-linearità alla rete.
-- **`optimizers.py`**: I motori di ricerca del minimo (`SGD`, `SGDMomentum`) che aggiornano i pesi.
+- **`layers.py`**: I layer standard: `Dense` (neuroni completamente connessi) e `BatchNorm` (normalizzazione per batch).
+- **`activation.py`**: Le funzioni di attivazione (`ReLU`, `LeakyReLU`, `Tanh`, `Sigmoid`, `Linear`, `Softmax`) che danno "intelligenza" e non-linearità alla rete.
+- **`optimizers.py`**: I motori di ricerca del minimo (`SGD`, `SGDMomentum`, `Adam`, tutti con `weight_decay` opzionale) che aggiornano i pesi.
 - **`operations.py`**: Operazioni speciali come il `Dropout` (per la regolarizzazione).
 
 ---
@@ -61,6 +61,37 @@ layers = [
     Dense(neurons=1, activation=Linear())
 ]
 
+model = NeuralNetwork(layers=layers, loss=MeanSquaredError())
+```
+
+---
+
+## Layer Disponibili
+
+| Layer | Descrizione |
+|---|---|
+| `Dense(neurons, activation)` | Layer completamente connesso. Inizializzazione He per ReLU/LeakyReLU, scelta automatica del numero di input dalla forma del primo batch. |
+| `BatchNorm(num_features, momentum=0.1, eps=1e-5)` | Normalizzazione per batch con parametri learnable γ (scala) e β (shift). |
+| `Dropout(keep_prob=0.8)` | Regolarizzazione (inverted dropout). Trasparente in inferenza. |
+
+### `BatchNorm`
+
+Durante il training normalizza rispetto a media/varianza del batch corrente
+(varianza di popolazione, divisa per `B`, come PyTorch con `affine=True`) e
+aggiorna le statistiche running con una media mobile esponenziale. In inferenza
+usa le statistiche running accumulate. Va inserito **prima** dell'attivazione
+non lineare del layer successivo.
+
+```python
+from libNN import NeuralNetwork, Dense, BatchNorm, Dropout, ReLU, Linear
+from libNN.losses import MeanSquaredError
+
+layers = [
+    Dense(neurons=64, activation=ReLU()),
+    BatchNorm(64),
+    Dropout(keep_prob=0.8),
+    Dense(neurons=1, activation=Linear()),
+]
 model = NeuralNetwork(layers=layers, loss=MeanSquaredError())
 ```
 
@@ -90,6 +121,7 @@ La funzione di Loss è l'obiettivo della tua rete. Se scegli quella sbagliata, l
 |---|---|
 | `ReLU()` | Layer nascosti — scelta predefinita, veloce ed efficace |
 | `LeakyReLU(alpha=0.2)` | Layer nascosti — evita il problema dei "neuroni morti" di ReLU |
+| `Tanh()` | Layer nascosti — output zero-centrato in (−1, 1) |
 | `Sigmoid()` | Output per classificazione binaria o segmentazione |
 | `Softmax()` | Output per classificazione multi-classe — converte i logit in probabilità (somma = 1) |
 | `Linear()` | Output per regressione — lascia passare il valore senza modifiche |
@@ -107,14 +139,38 @@ from libNN.network import Trainer
 optimizer = SGDMomentum(lr=0.01, momentum=0.9)
 trainer = Trainer(net=model, optim=optimizer)
 
-trainer.fit(
+history = trainer.fit(
     X_train, y_train,   # Dati per imparare
-    X_test,  y_test,    # Dati per verificare che non stia memorizzando (overfitting)
+    X_test,  y_test,    # Dati di validazione (opzionali: passa None per disattivarli)
     epochs=100,         # Quante volte guardare tutti i dati
     eval_every=10,      # Ogni quante epoche valutare la Loss di validazione
     batch_size=32,      # Quanti dati processare alla volta
     patience=5          # Epoche di valutazione senza miglioramento prima di fermarsi
 )
+
+# fit() restituisce uno storico dell'addestramento:
+print(history['train_loss'])     # lista: loss media per epoca
+print(history['val_loss'])       # lista: validation loss per valutazione (vuota se val=None)
+print(history['stopped_epoch'])  # epoca di early stopping, o None
+```
+
+### Ottimizzatori
+
+| Ottimizzatore | Quando usarlo |
+|---|---|
+| `SGD(lr=0.01)` | Baseline semplice |
+| `SGDMomentum(lr=0.01, momentum=0.9)` | Scelta predefinita — convergenza più stabile |
+| `Adam(lr=0.001, beta1=0.9, beta2=0.999, eps=1e-8)` | Reti profonde o gradienti sparsi |
+
+Tutti gli ottimizzatori accettano `weight_decay` (regolarizzazione L2). Il decay
+si applica solo alle matrici dei pesi, **mai** ai bias né ai parametri di `BatchNorm`,
+in linea con la pratica standard.
+
+```python
+from libNN.optimizers import Adam, SGDMomentum
+
+Adam(lr=0.001, weight_decay=1e-4)
+SGDMomentum(lr=0.01, momentum=0.9, weight_decay=1e-3)
 ```
 
 ### Parametri di `fit()`
@@ -219,29 +275,49 @@ model = NeuralNetwork(layers=layers, loss=CategoricalCrossEntropy())
 # classe 2 → [0, 0, 1]
 ```
 
-### Predizione (Multi-classe)
+### Predizione e Valutazione
+
+La rete espone metodi che disattivano automaticamente Dropout e BatchNorm
+(modalità inferenza), senza dover toccare manualmente il flag `model.train`:
 
 ```python
-model.train = False
-y_probs = model.forward(X_test)       # probabilità per ogni classe
-y_pred  = np.argmax(y_probs, axis=1)  # classe con probabilità più alta
+y_probs   = model.predict(X_test)          # output grezzo (probabilità o logit)
+y_pred    = model.predict_classes(X_test)  # classi discrete (soglia 0.5 o argmax)
+test_loss = model.evaluate(X_test, y_test) # loss su un batch, senza aggiornare i pesi
 ```
+
+| Metodo | Descrizione |
+|---|---|
+| `model.forward(x)` | Passaggio in avanti (rispetta `model.train`) |
+| `model.predict(x)` | Output grezzo in modalità inferenza |
+| `model.predict_classes(x)` | Classi discrete: soglia 0.5 (binario) o argmax (multi-classe) |
+| `model.evaluate(x, y)` | Loss su un batch in inferenza |
 
 ---
 
 ## Utilità (`utils.py`)
 
 ```python
-from libNN.utils import compute_accuracy, compute_f1_score, mae, rmse, normalize_data, train_test_split
+from libNN.utils import (
+    compute_accuracy, compute_f1_score, confusion_matrix,
+    mae, rmse, r2_score,
+    normalize, normalize_minmax, normalize_data,
+    to_one_hot, train_test_split,
+)
 ```
 
 | Funzione | Descrizione |
 |---|---|
-| `compute_accuracy(y_true, y_pred)` | Accuratezza per classificazione |
-| `compute_f1_score(y_true, y_pred)` | F1-score per classificazione |
+| `compute_accuracy(y_pred, y_true)` | Accuratezza per classificazione |
+| `compute_f1_score(y_pred, y_true)` | F1-score per classificazione |
+| `confusion_matrix(y_true, y_pred)` | Matrice di confusione `n_classi × n_classi` |
 | `mae(y_true, y_pred)` | Mean Absolute Error per regressione |
 | `rmse(y_true, y_pred)` | Root Mean Squared Error per regressione |
-| `normalize_data(X)` | Normalizza le feature in input |
+| `r2_score(y_true, y_pred)` | Coefficiente di determinazione R² |
+| `normalize(X)` | Standardizzazione z-score per colonna: `(x − μ) / σ` |
+| `normalize_minmax(X)` | Min-max per colonna: `(x − min) / (max − min)` |
+| `normalize_data(X)` | Min-max globale su tutto l'array (es. immagini) |
+| `to_one_hot(labels, num_classes)` | Converte etichette intere in one-hot |
 | `train_test_split(*arrays, test_size, shuffle, seed)` | Divide uno o più array in train e test set |
 
 ### `train_test_split`

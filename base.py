@@ -119,6 +119,9 @@ class Layer(object):
         self.first = True
         self.params: typing.List[ndarray] = []
         self.param_grads: typing.List[ndarray] = []
+        # Parallel to self.params: True if weight decay (L2) should apply to that
+        # parameter. Weights decay, biases and norm parameters do not.
+        self.param_decay: typing.List[bool] = []
         self.operations: typing.List[Operation] = []
         self.output = None
 

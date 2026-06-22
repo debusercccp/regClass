@@ -117,18 +117,113 @@ def rmse(y_true: ndarray, y_pred: ndarray) -> float:
 
 def normalize_data(data: ndarray) -> ndarray:
     '''
-    Min-max normalization: scale data to [0, 1].
-    Useful for image data or features with different scales.
-    
+    Global min-max normalization: scale all data to [0, 1] using a single
+    global min/max. Useful for image data.
+
     Args:
         data: Input array of any shape
-        
+
     Returns:
         Normalized array with values in [0, 1], same shape as input
-        
+
     Formula: x_norm = (x - min(x)) / (max(x) - min(x) + eps)
     '''
     return (data - np.min(data)) / (np.max(data) - np.min(data) + 1e-9)
+
+
+def normalize(x: ndarray) -> ndarray:
+    '''
+    Z-score normalization per column: (x - mean) / std.
+    Columns with (near-)zero standard deviation are centered but not scaled.
+
+    Args:
+        x: Input array, shape (n_samples, n_features)
+
+    Returns:
+        Standardized array (zero mean, unit variance per column).
+    '''
+    mean = x.mean(axis=0, keepdims=True)
+    std = x.std(axis=0, keepdims=True)
+    safe_std = np.where(std > 1e-10, std, 1.0)
+    return (x - mean) / safe_std
+
+
+def normalize_minmax(x: ndarray) -> ndarray:
+    '''
+    Min-max normalization per column: (x - min) / (max - min).
+    Columns with zero range are mapped to 0.
+
+    Args:
+        x: Input array, shape (n_samples, n_features)
+
+    Returns:
+        Array scaled to [0, 1] per column.
+    '''
+    col_min = x.min(axis=0, keepdims=True)
+    col_max = x.max(axis=0, keepdims=True)
+    rng = col_max - col_min
+    safe_rng = np.where(rng > 1e-10, rng, 1.0)
+    out = (x - col_min) / safe_rng
+    # Columns with zero range collapse to 0.
+    return np.where(rng > 1e-10, out, 0.0)
+
+
+def r2_score(y_true: ndarray, y_pred: ndarray) -> float:
+    '''
+    Coefficient of determination R^2 for regression.
+    R^2 = 1 - SS_res / SS_tot
+
+    Args:
+        y_true: Ground truth values
+        y_pred: Predicted values (same shape as y_true)
+
+    Returns:
+        R^2 as a float (1.0 = perfect, 0.0 = predicting the mean).
+    '''
+    ss_res = np.sum(np.power(y_true - y_pred, 2))
+    ss_tot = np.sum(np.power(y_true - np.mean(y_true), 2))
+    if ss_tot < 1e-15:
+        return 1.0
+    return 1.0 - ss_res / ss_tot
+
+
+def confusion_matrix(y_true: ndarray, y_pred: ndarray) -> ndarray:
+    '''
+    Confusion matrix of shape (n_classes, n_classes).
+    cm[i][j] = number of samples with true label i predicted as j.
+
+    Handles one-hot encoded inputs (multi-class) or single-column inputs
+    (binary, thresholded at 0.5).
+
+    Args:
+        y_true: Ground truth (one-hot, indices, or binary column)
+        y_pred: Predictions (probabilities/logits or labels)
+
+    Returns:
+        Integer confusion matrix as an ndarray.
+    '''
+    def to_labels(arr, n_classes_hint):
+        arr = np.asarray(arr)
+        if arr.ndim == 2 and arr.shape[1] > 1:
+            return np.argmax(arr, axis=1), arr.shape[1]
+        flat = arr.reshape(arr.shape[0], -1)[:, 0] if arr.ndim == 2 else arr.flatten()
+        # Single column: treat as binary threshold if values are not clean indices.
+        if n_classes_hint == 2:
+            return (flat >= 0.5).astype(int), 2
+        return flat.astype(int), n_classes_hint
+
+    n_classes = max(
+        y_pred.shape[1] if (y_pred.ndim == 2 and y_pred.shape[1] > 1) else 2,
+        y_true.shape[1] if (y_true.ndim == 2 and y_true.shape[1] > 1) else 2,
+    )
+    pred_labels, _ = to_labels(y_pred, n_classes)
+    true_labels, _ = to_labels(y_true, n_classes)
+
+    cm = np.zeros((n_classes, n_classes), dtype=int)
+    for t, p in zip(true_labels, pred_labels):
+        if 0 <= t < n_classes and 0 <= p < n_classes:
+            cm[t, p] += 1
+    return cm
 
 def compute_f1_score(predictions: ndarray, target: ndarray) -> float:
     '''

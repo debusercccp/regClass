@@ -45,6 +45,27 @@ class Linear(Operation):
         '''Gradient passes through unchanged'''
         return output_grad
 
+class Tanh(Operation):
+    '''
+    Hyperbolic tangent activation function.
+    Output range: (-1, 1). Zero-centered, useful for hidden layers.
+    '''
+
+    def __init__(self) -> None:
+        '''Initialize Tanh'''
+        super().__init__()
+
+    def _output(self) -> ndarray:
+        '''Compute output: tanh(x)'''
+        return np.tanh(self.input_)
+
+    def _input_grad(self, output_grad: ndarray) -> ndarray:
+        '''
+        Compute input gradient.
+        d/dx tanh(x) = 1 - tanh(x)^2
+        '''
+        return output_grad * (1.0 - self.output ** 2)
+
 class ReLU(Operation):
     '''
     Rectified Linear Unit activation.
